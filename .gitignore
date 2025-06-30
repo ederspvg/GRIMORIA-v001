@@ -1,7 +1,12 @@
-ambiente.env
+
+# Ambientes virtuais
+.venv/
+env/
+venv/ambiente.env
 ambiente/
 ambiente_bkp/
 *.env
+
 api/
 api/gmail/
 resposta_audio
@@ -15,4 +20,27 @@ chroma_db
 manuais/*.*
 temp_rag_uploads/*.*
 protheus_custom/*.*
+
+# Pastas de dados do Grimória
+biblioteca_geral/
+biblioteca_geral
+
+# Arquivos de cache e logs (gerais de Python)
+__pycache__/
 __pycache__
+*.pyc
+*.log
+*.sqlite3
+# Pasta com meus arquivos de teste
+meus_documentos_de_teste/
+meus_documentos_de_teste
+
+# Pasta onde está o banco de dados
+base_de_dados/
+base_de_dados
+banco_de_dados/
+banco_de_dados
+
+# Pasta de BKP de Scripts
+bkp_scripts/
+bkp_scripts
