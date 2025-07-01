@@ -42,6 +42,9 @@ def consultar_gemma_api_gemini(instrucao: str, contexto: str, pergunta: str, ima
     Returns:
         str: A resposta gerada pela IA. Retorna uma mensagem de erro em caso de falha.
     """
+    if not instrucao or instrucao.strip() == "":
+        instrucao = "Haja como um especialista no assunto perguntado.  Responda à pergunta a seguir usando **exclusivamente** as informações fornecidas no CONTEXTO"
+    
     prompt_parts = []
     if instrucao:
         prompt_parts.append(instrucao)
@@ -110,7 +113,30 @@ def consultar_gemma_api_gemini(instrucao: str, contexto: str, pergunta: str, ima
             return f"Ocorreu um erro relacionado ao limite de tokens: {error_message}"
         else:
             return f"Ocorreu um erro ao gerar a resposta pela IA: {error_message}"
+    
+def consultar_modelos_gemini_disponiveis() -> str:
+    """
+    Consulta os modelos disponíveis na API do Google Generative AI e retorna uma lista formatada.
+
+    Returns:
+        str: Uma string contendo os modelos disponíveis, ou uma mensagem de erro se a consulta falhar.
+    """
+    try:
+        models = genai.list_models()
+        if not models:
+            return "Nenhum modelo disponível encontrado."
         
+        modelos_disponiveis = ""
+        # modelos_disponiveis = "\n".join([f"- {model.name})" for model in models])
+        for m in genai.list_models():
+            if 'generateContent' in m.supported_generation_methods:
+                print(m.name)
+                modelos_disponiveis += f"- {m.name}\n"
+        return f"Modelos disponíveis:\n{modelos_disponiveis}"
+    
+    except Exception as e:
+        return f"Erro ao consultar modelos disponíveis: {str(e)}"
+    
 #------------------------------------------------------------------------------------------------------
 # Bloco de Teste interativo
 # 
@@ -119,13 +145,18 @@ if __name__ == "__main__":
     print(f"--- Teste Interativo de IA via API Google Generative AI (Modelo: {API_MODEL}) ---")
     print("Certifique-se de que sua chave de API GEMINI_API_KEY está configurada no arquivo 'ambiente.env'.")
     print("\nCertifique-se de escolher um modelo multimodal para garantir que será possível analisar imagens quando necessário.")
+    
+    modelos_disponiveis = consultar_modelos_gemini_disponiveis()
+    print("\n--- Modelos Disponíveis na API ---")
+    print(modelos_disponiveis)
 
     while True:
         print("\n--- Entrada de Dados para a IA ---")
-        instrucao_usuario = input("Digite a INSTRUÇÃO para a IA (ex: 'Haja como um especialista em IA'): \n> ").strip()
-        contexto_usuario = input("Digite o CONTEXTO de informações para a IA (deixe em branco se não houver): \n> ").strip()
-        pergunta_usuario = input("Digite a PERGUNTA para a IA (ou 'sair' para encerrar): \n> ").strip()
-        caminho_imagem_teste = input("Digite o caminho completo para uma imagem de teste (opcional, deixe em branco para pular): ").strip()
+        instrucao_usuario       = input("Digite a INSTRUÇÃO para a IA (ex: 'Haja como um especialista em IA'): \n> ").strip()
+        contexto_usuario        = input("Digite o CONTEXTO de informações para a IA (deixe em branco se não houver): \n> ").strip()
+        pergunta_usuario        = input("Digite a PERGUNTA para a IA (ou 'sair' para encerrar): \n> ").strip()
+        caminho_imagem_teste    = input("Digite o caminho completo para uma imagem de teste (opcional, deixe em branco para pular): ").strip()
+        modelo_ia               = input("Digite o nome do modelo de IA a ser usado (deixe em branco para usar o padrão 'gemma-3-27b-it'): ").strip()
 
         if pergunta_usuario.lower() == 'sair':
             print("Encerrando o teste interativo.")
@@ -137,7 +168,7 @@ if __name__ == "__main__":
 
         print("\nProcessando sua solicitação...\n")
         # Chamada da função com os três novos parâmetros
-        resposta_ia = consultar_gemma_api_gemini(instrucao_usuario, contexto_usuario, pergunta_usuario,caminho_imagem_teste)
+        resposta_ia = consultar_gemma_api_gemini(instrucao_usuario, contexto_usuario, pergunta_usuario,caminho_imagem_teste, modelo_ia)
         
         print("\n--- Resposta da IA ---")
         print(f"Descrição da imagem: {resposta_ia}")

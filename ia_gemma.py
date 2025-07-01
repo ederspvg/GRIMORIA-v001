@@ -7,7 +7,7 @@ import json # Para lidar com a resposta JSON
 # O endereço padrão da API do Ollama. Certifique-se de que o Ollama está rodando.
 OLLAMA_API_URL = "http://localhost:11434/api/generate"
 # --- MODELO ATUALIZADO PARA QWEN3 ---
-OLLAMA_MODEL = "gemma3:latest" # O nome do modelo que você baixou no Ollama: gemma3:latest, qwen3:latest
+OLLAMA_MODEL = "gemma3:4b" # O nome do modelo que você baixou no Ollama: gemma3:latest, qwen3:latest, gemma3n:latest
 
 def consultar_ollama_local(instrucao: str, contexto: str, pergunta: str, imagem_path: str = None, modelo_ia: str = OLLAMA_MODEL) -> str:
     """
@@ -26,6 +26,9 @@ def consultar_ollama_local(instrucao: str, contexto: str, pergunta: str, imagem_
         str: A resposta gerada pela IA. Retorna uma mensagem de erro em caso de falha.
     """
     
+    if not instrucao or instrucao.strip() == "":
+        instrucao = "Haja como um especialista no assunto perguntado.  Responda à pergunta a seguir usando **exclusivamente** as informações fornecidas no CONTEXTO"
+    
     # --- CONSTRUÇÃO DO PROMPT FINAL ---
     # Concatenamos os três parâmetros de texto para formar o prompt completo para a IA.
     # Adicionei quebras de linha para melhor separação e clareza para o modelo.
@@ -35,6 +38,9 @@ def consultar_ollama_local(instrucao: str, contexto: str, pergunta: str, imagem_
         f"Pergunta: {pergunta}"
     )
 
+    if modelo_ia is None or modelo_ia.strip() == "":
+        modelo_ia = OLLAMA_MODEL
+    
     print(f"DEBUG: Iniciando consulta ao modelo {modelo_ia}.")
     print(f"DEBUG: Prompt final enviado (início): '{final_prompt[:200]}...'") # Log do início do prompt
     
@@ -94,6 +100,7 @@ if __name__ == "__main__":
         instrucao_usuario = input("Digite a INSTRUÇÃO para a IA (ex: 'haja como um analista de RH e responda apenas com base no contexto'): \n> ").strip()
         contexto_usuario = input("Digite o CONTEXTO de informações para a IA (deixe em branco se não houver): \n> ").strip()
         pergunta_usuario = input("Digite a PERGUNTA para a IA (ou 'sair' para encerrar): \n> ").strip()
+        modelo_ia = input(f"Digite o NOME DO MODELO (padrão: '{OLLAMA_MODEL}'): \n> ").strip()
 
         if pergunta_usuario.lower() == 'sair':
             print("Encerrando o teste interativo.")
@@ -113,7 +120,7 @@ if __name__ == "__main__":
 
         print("\nProcessando sua solicitação...\n")
         # --- CHAMADA DA FUNÇÃO COM NOVOS PARÂMETROS ---
-        resposta_ia = consultar_ollama_local(instrucao_usuario, contexto_usuario, pergunta_usuario, caminho_imagem)
+        resposta_ia = consultar_ollama_local(instrucao_usuario, contexto_usuario, pergunta_usuario, caminho_imagem, modelo_ia)
         
         print("\n--- Resposta da IA ---")
         print(resposta_ia)

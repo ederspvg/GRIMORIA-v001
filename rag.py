@@ -38,7 +38,6 @@ class SentenceTransformerEmbeddingFunction(embedding_functions.EmbeddingFunction
     def __call__(self, texts: List[str]) -> List[List[float]]:
         return self.model.encode(texts).tolist()
 
-
 embedding_function = SentenceTransformerEmbeddingFunction()
 
 # ---------------------------------------------------------------------------------------------------------------------------
@@ -53,6 +52,7 @@ class SistemaRAG:
         os.makedirs(self.persist_directory, exist_ok=True)
         # Carregar a lista de nomes de coleções existentes
         self.lista_nomes_colecoes = self._carregar_lista_colecoes()
+        self.temas_disponiveis = self._carregar_temas_disponiveis()  # Nova lista de temas
         print(f"[i] SistemaRAG inicializado. Banco de dados em: {self.persist_directory}")
         print(f"[i] {len(self.lista_nomes_colecoes)} coleções de documentos registradas.")
 
@@ -69,6 +69,20 @@ class SistemaRAG:
     def _salvar_lista_colecoes(self):
         with open(self.lista_colecoes_file, 'w', encoding='utf-8') as f:  # Usa o novo atributo
             json.dump(self.lista_nomes_colecoes, f, indent=4)
+
+    def _carregar_temas_disponiveis(self) -> List[str]:
+        """Carrega a lista de temas disponíveis a partir das coleções existentes."""
+        temas = set()
+        for nome_colecao in self.lista_nomes_colecoes:
+            try:
+                colecao = self.client.get_collection(name=nome_colecao, embedding_function=embedding_function)
+                for metadata in colecao.get(include=['metadatas'])['metadatas']:
+                    tema = metadata.get("tema")
+                    if tema:
+                        temas.add(tema)
+            except Exception as e:
+                print(f"[-] Erro ao carregar temas da coleção '{nome_colecao}': {e}")
+        return list(temas)
 
     def _obter_proximo_nome_colecao(self) -> str:
         """Gera um nome numérico sequencial para a próxima coleção."""
@@ -189,8 +203,9 @@ class SistemaRAG:
     def adicionar_documento(self, caminho_arquivo: str) -> str:
         nome_arquivo = os.path.basename(caminho_arquivo)
         extensao = os.path.splitext(nome_arquivo)[1].lower()
+        tema = os.path.basename(os.path.dirname(caminho_arquivo))  # Extrai o tema do nome da pasta
         conteudo_texto_ou_df = None
-        print(f"[i] Processando documento: {nome_arquivo} (Tipo: {extensao})")
+        print(f"[i] Processando documento: {nome_arquivo} (Tipo: {extensao}, Tema: {tema})")
         if extensao == '.pdf':
             conteudo_texto_ou_df = self._ler_pdf(caminho_arquivo)
         elif extensao == '.txt':
@@ -203,16 +218,23 @@ class SistemaRAG:
             conteudo_texto_ou_df = self._ler_excel(caminho_arquivo)
         elif extensao in ['.jpg', '.jpeg', '.png', '.webp']:
             if OneRing.MOTOR_IA == 'gemini':
-                _instrucao_img = "Haja como um pintor e desenhista especialista em analisar e descrever imagens"
-                _contexto_img = "Otimize a descrição para um sistema RAG resgatar informações para uma IA analisar e responder ao usuário, incluindo no texto uma sessão de possíveis perguntas e respostas sobre a imagem."
+                _instrucao_img = "Haja como um especialista em analisar e descrever imagens"
+                _contexto_img = """
+                    Otimize a descrição da imagem para um sistema RAG resgatar informações para uma IA analisar e responder ao usuário,
+                    incluindo no texto uma sessão de possíveis perguntas e respostas sobre a imagem  ou sobre o assunto relacionado à imagem.
+                """
                 _comando_img = "Descreva a imagem com detalhes, incluindo cores, pessoas, animais, formas, objetos e contexto."
-                conteudo_texto_ou_df = Gemma_IA_API.consultar_gemma_api_gemini(_instrucao_img, _contexto_img, _comando_img, caminho_arquivo)
+                conteudo_texto_ou_df = Gemma_IA_API.consultar_gemma_api_gemini(_instrucao_img, _contexto_img, _comando_img, caminho_arquivo,"gemma-3-27b-it")
             else:
-                _instrucao_img = "Haja como um pintor e desenhista especialista em analisar e descrever imagens"
-                _contexto_img = "Otimize a descrição para um sistema RAG resgatar informações para uma IA analisar e responder ao usuário, incluindo no texto uma sessão de possíveis perguntas e respostas sobre a imagem."
+                _instrucao_img = "Haja como um especialista em analisar e descrever imagens"
+                _contexto_img = """
+                    Otimize a descrição da imagem para um sistema RAG resgatar informações para uma IA analisar e responder ao usuário,
+                    incluindo no texto uma sessão de possíveis perguntas e respostas sobre a imagem ou sobre o assunto relacionado à imagem, 
+                    como o que é o objeto foco da imagem.
+                """
                 _comando_img = "Descreva a imagem com detalhes, incluindo cores, pessoas, animais, formas, objetos e contexto."
-                conteudo_texto_ou_df = Gemma_IA.consultar_ollama_local(_instrucao_img, _contexto_img, _comando_img, caminho_arquivo)
-            print(f"  [+] Descrição da imagem recebida: \n {conteudo_texto_ou_df}")
+                conteudo_texto_ou_df = Gemma_IA.consultar_ollama_local(_instrucao_img, _contexto_img, _comando_img, caminho_arquivo,"gemma3:4b")
+            print(f"  [+] Descrição da imagem recebida: \n{conteudo_texto_ou_df}")
         else:
             print(f"[-] Tipo de arquivo '{extensao}' não suportado.")
             return None
@@ -246,7 +268,8 @@ class SistemaRAG:
                 "extensao": extensao,
                 "caminho_completo": caminho_arquivo,
                 "numero_chunk": i,
-                "tipo_conteudo": "texto_extraido" if extensao not in ['.jpg', '.jpeg', '.png', '.webp'] else "descricao_ia_imagem"
+                "tipo_conteudo": "texto_extraido" if extensao not in ['.jpg', '.jpeg', '.png', '.webp'] else "descricao_ia_imagem",
+                "tema": tema  # Novo metadado "tema"
             })
             ids.append(chunk_id)
         try:
@@ -256,6 +279,7 @@ class SistemaRAG:
                 ids=ids
             )
             self.lista_nomes_colecoes.append(nome_nova_colecao)
+            self.temas_disponiveis = self._carregar_temas_disponiveis()  # Atualiza a lista de temas
             self._salvar_lista_colecoes()
             print(f"[+] Documento '{nome_arquivo}' processado e adicionado como coleção '{nome_nova_colecao}'.")
             return nome_nova_colecao
@@ -264,12 +288,43 @@ class SistemaRAG:
             return None
 
     def deletar_colecao_por_nome(self, nome_colecao: str) -> bool:
+        """Deleta uma coleção específica pelo nome."""
         if nome_colecao not in self.lista_nomes_colecoes:
             print(f"[-] Coleção '{nome_colecao}' não encontrada na lista de coleções registradas.")
             return False
+
         try:
+            # Recupera os metadados da coleção antes de deletá-la
+            colecao = self.client.get_collection(name=nome_colecao, embedding_function=embedding_function)
+            metadados = colecao.get(include=['metadatas'])['metadatas']
+
+            if not metadados:
+                print(f"[!] A coleção '{nome_colecao}' não possui metadados registrados.")
+                return False
+
+            # Extrai informações únicas (nome do arquivo e tema)
+            arquivos_e_temas = set()
+            for meta in metadados:
+                nome_arquivo = meta.get("nome_arquivo_original", "N/A")
+                tema = meta.get("tema", "N/A")
+                arquivos_e_temas.add((nome_arquivo, tema))
+
+            # Exibe informações detalhadas da coleção
+            print(f"\n--- Detalhes da Coleção '{nome_colecao}' ---")
+            for nome_arquivo, tema in arquivos_e_temas:
+                print(f"  - Arquivo: {nome_arquivo}, Tema: {tema}")
+            print("-------------------------------------------")
+
+            # Confirmação antes de deletar
+            confirmacao = input(f"Tem certeza que deseja deletar a coleção '{nome_colecao}'? (s/n): ").lower()
+            if confirmacao != 's':
+                print("Operação cancelada.")
+                return False
+
+            # Deleta a coleção
             self.client.delete_collection(name=nome_colecao)
             self.lista_nomes_colecoes.remove(nome_colecao)
+            self.temas_disponiveis = self._carregar_temas_disponiveis()  # Atualiza a lista de temas
             self._salvar_lista_colecoes()
             print(f"[+] Coleção '{nome_colecao}' deletada com sucesso.")
             return True
@@ -290,6 +345,7 @@ class SistemaRAG:
                 except OSError as e:
                     print(f"[-] Erro ao remover '{self.lista_colecoes_file}': {e}")
             self.lista_nomes_colecoes = []
+            self.temas_disponiveis = []  # Limpa a lista de temas
             return
         try:
             for nome_colecao in colecoes_para_deletar:
@@ -299,6 +355,7 @@ class SistemaRAG:
                 except Exception as e:
                     print(f"[-] Erro ao deletar a coleção '{nome_colecao}': {e}")
             self.lista_nomes_colecoes = []
+            self.temas_disponiveis = []  # Limpa a lista de temas
             self._salvar_lista_colecoes()
             print("[+] Lista de coleções em memória e arquivo 'lista_colecoes.json' zerados.")
             print("[v] Todas as coleções foram zeradas com sucesso!")
@@ -310,7 +367,7 @@ class SistemaRAG:
         print(f"\n--- [i] Criando/Atualizando coleções da pasta '{pasta_documentos}' ---")
         os.makedirs(pasta_documentos, exist_ok=True)
         os.makedirs(self.persist_directory, exist_ok=True)
-        self.zerar_todas_colecoes()
+        # self.zerar_todas_colecoes()
         arquivos_na_pasta = [f for f in os.listdir(pasta_documentos) if os.path.isfile(os.path.join(pasta_documentos, f))]
         if not arquivos_na_pasta:
             print(f"[!] Nenhum arquivo encontrado em '{pasta_documentos}'.")
@@ -325,6 +382,36 @@ class SistemaRAG:
         print(f"[+] Total de coleções ativas no ChromaDB: {len(self.lista_nomes_colecoes)}")
         print(f"[+] Total de chunks no ChromaDB: {self.total_chunks_no_bd()}")
 
+    def listar_colecoes(self):
+        """Lista todas as coleções existentes com seus metadados."""
+        if not self.lista_nomes_colecoes:
+            print("[!] Nenhuma coleção encontrada.")
+            return
+
+        print("\n--- LISTA DE COLEÇÕES EXISTENTES ---")
+        for nome_colecao in self.lista_nomes_colecoes:
+            try:
+                colecao = self.client.get_collection(name=nome_colecao, embedding_function=embedding_function)
+                metadados = colecao.get(include=['metadatas'])['metadatas']
+                if not metadados:
+                    print(f"[!] A coleção '{nome_colecao}' não possui metadados registrados.")
+                    continue
+
+                # Extrai informações únicas (nome do arquivo e tema)
+                arquivos_e_temas = set()
+                for meta in metadados:
+                    nome_arquivo = meta.get("nome_arquivo_original", "N/A")
+                    tema = meta.get("tema", "N/A")
+                    arquivos_e_temas.add((nome_arquivo, tema))
+
+                # Exibe os metadados no formato solicitado
+                for nome_arquivo, tema in arquivos_e_temas:
+                    print(f"- {nome_colecao} | {nome_arquivo} | {tema}")
+
+            except Exception as e:
+                print(f"[-] Erro ao acessar a coleção '{nome_colecao}': {e}")
+        print("-----------------------------------")
+    
     def total_chunks_no_bd(self) -> int:
         total = 0
         for nome_colecao in self.lista_nomes_colecoes:
@@ -341,12 +428,34 @@ class SistemaRAG:
                                      instrucao: str = "", 
                                      pdf_path: str = None, 
                                      imagem_path: str = None, 
-                                     modelo_de_pensamento: str = "gemini-1.5-flash-latest", 
+                                     modelo_de_pensamento: str = "gemma-3-27b-it", 
                                      n_results_per_colecao: int = 10, 
                                      max_distance_threshold: float = 0.8) -> str:
         print(f"\n--- [i] Iniciando consulta RAG para: '{pergunta}' (IA: {'LOCAL' if usar_ia_local else 'API'}) ---")
-        contextos_relevantes = []
+        
+        # Classifica a pergunta para determinar o tema
+        tema_usuario = self._classificar_pergunta_por_tema(pergunta)
+        if not tema_usuario:
+            return "Não foi possível identificar o tema da pergunta."
+        else:
+            print(f"\nO tema identificado para a pergunta é: '{tema_usuario}'.")
+
+        # Filtra coleções pelo tema
+        colecoes_filtradas = []
         for nome_colecao in self.lista_nomes_colecoes:
+            try:
+                colecao = self.client.get_collection(name=nome_colecao, embedding_function=embedding_function)
+                metadados = colecao.get(include=['metadatas'])['metadatas']
+                if any(meta.get("tema") == tema_usuario for meta in metadados):
+                    colecoes_filtradas.append(nome_colecao)
+            except Exception as e:
+                print(f"[-] Erro ao verificar tema da coleção '{nome_colecao}': {e}")
+
+        if not colecoes_filtradas:
+            return f"Nenhuma coleção encontrada para o tema '{tema_usuario}'."
+
+        contextos_relevantes = []
+        for nome_colecao in colecoes_filtradas:
             try:
                 colecao_chroma = self.client.get_collection(name=nome_colecao, embedding_function=embedding_function)
                 if colecao_chroma.count() == 0:
@@ -370,40 +479,38 @@ class SistemaRAG:
             except Exception as e:
                 print(f"[-] Erro ao consultar coleção '{nome_colecao}': {e}")
                 continue
+
         contextos_relevantes_filtrados = sorted(contextos_relevantes, key=lambda x: x['distancia'])
         print(f"  [+ Contextos relevantes encontrados: {len(contextos_relevantes_filtrados)}")
         if not contextos_relevantes_filtrados:
             return "Não foram encontrados documentos relevantes no Grimório para sua consulta."
-        # prompt_final = f"Instrução: {instrucao}\n" if instrucao else ""
-        # prompt_final += "Contexto dos documentos:\n" + "\n".join([item['conteudo'] for item in contextos_relevantes_filtrados])
-        # prompt_final += f"\nPergunta: {pergunta}"
-        # prompt_final += "\nResponda estritamente com base no contexto fornecido. Se a resposta não puder ser inferida do contexto, diga que não tem informações suficientes para responder."
-        
-        instrucao_tratada   = f"Instrução: {instrucao}\n" if instrucao else ""
-        instrucao_tratada   += "\nResponda estritamente com base no contexto fornecido. Se a resposta não puder ser inferida do contexto, diga que não tem informações suficientes para responder."
-        contexto_tratado    = "Contexto:\n" + "\n".join([item['conteudo'] for item in contextos_relevantes_filtrados])
-        pergunta_tratada    = f"\nPergunta: {pergunta}"
-        
+
+        instrucao_tratada = f"Instrução: {instrucao}\n" if instrucao else ""
+        instrucao_tratada += " Responda estritamente com base no contexto fornecido. Se a resposta não puder ser inferida do contexto, diga que não tem informações suficientes para responder."
+        contexto_tratado = "\nContexto:\n" + "\n".join([item['conteudo'] for item in contextos_relevantes_filtrados])
+        pergunta_tratada = f"\nPergunta: {pergunta}"
+        #Aqui
+        Canivete.salvar_txt(instrucao_tratada + contexto_tratado + pergunta_tratada, "prompt_completo.txt")
+
         try:
             if usar_ia_local:
                 print(f"  [i] Chamando Gemma_IA.consultar_gemma_local para gerar resposta...")
-                # resposta_gemini = Gemma_IA.consultar_gemma_local(prompt_final, "")
                 resposta_gemini = Gemma_IA.consultar_ollama_local(
                     instrucao_tratada,
                     contexto_tratado,
                     pergunta_tratada,
-                    imagem_path
+                    imagem_path,
+                    modelo_de_pensamento
                 )
                 print(f"  [+] Resposta do Gemma LOCAL recebida.")
             else:
                 print(f"  [i] Chamando API Gemini para gerar resposta...")
-                # model = genai.GenerativeModel(modelo_de_pensamento)
-                # resposta_gemini = model.generate_content(prompt_final).text
                 resposta_gemini = Gemma_IA_API.consultar_gemma_api_gemini(
                     instrucao_tratada,
                     contexto_tratado,
                     pergunta_tratada,
-                    imagem_path
+                    imagem_path,
+                    modelo_de_pensamento
                 )
                 print(f"  [+] Resposta do Gemini API recebida.")
         except Exception as e:
@@ -419,6 +526,18 @@ class SistemaRAG:
         print(f" [i] Método consultar_multiplas_colecoes finalizado.")
         return resposta_gemini
 
+    def _classificar_pergunta_por_tema(self, pergunta: str) -> str:
+        """Classifica a pergunta do usuário para determinar o tema."""
+        instrucao = "Identifique o tema da pergunta com base nos temas disponíveis e responda exclusivamente com o tema identificado, sem acrescentar mais nada à resposta."
+        contexto = f"Temas disponíveis: {', '.join(self.temas_disponiveis)}"
+        #Aqui OneRing.PESQUISA_TEMA_IA_LOCAL pode ser usado para decidir se a IA local ou a API Gemini será usada
+        if OneRing.PESQUISA_TEMA_IA_LOCAL:
+            resposta = Gemma_IA.consultar_ollama_local(instrucao, contexto, pergunta, None, "gemma3n:latest")
+        else:
+            resposta = Gemma_IA_API.consultar_gemma_api_gemini(instrucao, contexto, pergunta, None, "gemma-3n-e4b-it")
+        #resposta = Gemma_IA.consultar_ollama_local(instrucao, contexto, pergunta)
+        tema_identificado = resposta.strip().lower()
+        return tema_identificado if tema_identificado in self.temas_disponiveis else None
 
 # ---------------------------------------------------------------------------------------------------------------------------
 # Bloco de Teste Principal
@@ -438,7 +557,8 @@ if __name__ == "__main__":
         print("2. Consultar biblioteca (RAG)")
         print("3. Deletar uma coleção (documento)")
         print("4. Zerar todas as coleções")
-        print("5. Sair")
+        print("5. Listar coleções existentes")  # Nova opção
+        print("6. Sair")
         escolha = input("Escolha uma opção: ")
         if escolha == '1':
             print(f"\n--- ADICIONAR/ATUALIZAR DOCUMENTOS ---")
@@ -456,6 +576,9 @@ if __name__ == "__main__":
                         break
                     interacao_tipo_ia = input("Usar IA Local? (s/n): ").lower()
                     usar_ia_local_flag = True if interacao_tipo_ia == 's' else False
+                    
+                    interacao_usuario_modelo_ia = input("\nDigite o nome do modelo (exemplo: gemma3n:latest ou gemma-3-27b-it, etc).\nLembre-se de informar um modelo multimodal se quiser analisar imagens e texto) : \n -> ")
+                    
                     interacao_usuario_quant_resultados = input("Quantos resultados (chunks) por documento deseja buscar? (padrão: 10): \n -> ")
                     if not interacao_usuario_quant_resultados.isdigit():
                         interacao_usuario_quant_resultados = "10"
@@ -471,7 +594,7 @@ if __name__ == "__main__":
                         pergunta=interacao_usuario,
                         usar_ia_local=usar_ia_local_flag,
                         instrucao="Haja como um especialista nos assuntos questionados e responda de forma clara, detalhada e ao mesmo tempo didática.",
-                        modelo_de_pensamento="gemma-3-27b-it",
+                        modelo_de_pensamento=interacao_usuario_modelo_ia,
                         n_results_per_colecao=int(interacao_usuario_quant_resultados),
                         max_distance_threshold=similaridade
                     )
@@ -488,8 +611,29 @@ if __name__ == "__main__":
                 print("[!] Nenhuma coleção para deletar.")
             else:
                 print("Coleções existentes:")
-                for i, nome_col in enumerate(sistema_rag.lista_nomes_colecoes):
-                    print(f"{i+1}. {nome_col}")
+                for i, nome_colecao in enumerate(sistema_rag.lista_nomes_colecoes):
+                    try:
+                        colecao = sistema_rag.client.get_collection(name=nome_colecao, embedding_function=embedding_function)
+                        metadados = colecao.get(include=['metadatas'])['metadatas']
+
+                        if not metadados:
+                            print(f"{i+1}. {nome_colecao} | N/A | N/A")
+                            continue
+
+                        # Extrai informações únicas (nome do arquivo e tema)
+                        arquivos_e_temas = set()
+                        for meta in metadados:
+                            nome_arquivo = meta.get("nome_arquivo_original", "N/A")
+                            tema = meta.get("tema", "N/A")
+                            arquivos_e_temas.add((nome_arquivo, tema))
+
+                        # Exibe a primeira combinação de arquivo e tema (ou todas, se necessário)
+                        for j, (nome_arquivo, tema) in enumerate(arquivos_e_temas):
+                            if j == 0:  # Mostra apenas o primeiro arquivo/tema para simplificar
+                                print(f"{i+1}. {nome_colecao} | {nome_arquivo} | {tema}")
+                    except Exception as e:
+                        print(f"{i+1}. {nome_colecao} | [Erro ao carregar metadados: {e}]")
+
                 try:
                     indice_para_deletar = int(input("Digite o número da coleção que deseja deletar: ")) - 1
                     if 0 <= indice_para_deletar < len(sistema_rag.lista_nomes_colecoes):
@@ -507,8 +651,12 @@ if __name__ == "__main__":
             else:
                 print("Operação cancelada.")
             print("\n--- ZERAR TUDO CONCLUÍDO ---")
-        elif escolha == '5':
+        elif escolha == '5':  # Nova opção
+            print("\n--- LISTAR COLEÇÕES EXISTENTES ---")
+            sistema_rag.listar_colecoes()
+            print("\n--- LISTAGEM CONCLUÍDA ---")
+        elif escolha == '6':
             print("Saindo do programa. Até mais!")
             break
         else:
-            print("[!] Opção inválida. Por favor, escolha um número de 1 a 5.")
+            print("[!] Opção inválida. Por favor, escolha um número de 1 a 6.")

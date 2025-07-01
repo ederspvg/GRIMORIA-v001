@@ -44,3 +44,8 @@ banco_de_dados
 # Pasta de BKP de Scripts
 bkp_scripts/
 bkp_scripts
+
+# Arquivos de teste
+prompt_completo.txt
+api_testes.py
+app.py
