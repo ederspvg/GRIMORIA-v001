@@ -515,6 +515,7 @@ class SistemaRAG:
         if not tema_usuario:
             return "Não foi possível identificar o tema da pergunta."
         else:
+            print(f"\nA pergunta é: '{pergunta}'.")
             print(f"\nO tema identificado para a pergunta é: '{tema_usuario}'.")
 
         # Filtra coleções pelo tema
