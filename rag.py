@@ -316,10 +316,10 @@ class SistemaRAG:
             print("-------------------------------------------")
 
             # Confirmação antes de deletar
-            confirmacao = input(f"Tem certeza que deseja deletar a coleção '{nome_colecao}'? (s/n): ").lower()
-            if confirmacao != 's':
-                print("Operação cancelada.")
-                return False
+            # confirmacao = input(f"Tem certeza que deseja deletar a coleção '{nome_colecao}'? (s/n): ").lower()
+            # if confirmacao != 's':
+            #     print("Operação cancelada.")
+            #     return False
 
             # Deleta a coleção
             self.client.delete_collection(name=nome_colecao)
@@ -381,6 +381,83 @@ class SistemaRAG:
         print("\n--- [i] Processamento de documentos da pasta concluído. ---")
         print(f"[+] Total de coleções ativas no ChromaDB: {len(self.lista_nomes_colecoes)}")
         print(f"[+] Total de chunks no ChromaDB: {self.total_chunks_no_bd()}")
+    
+    def processar_uploads_e_criar_colecoes(self, files: List, tema: str) -> dict:
+        """
+        Processa arquivos enviados via upload, os salva em uma pasta temporária
+        com o tema especificado, cria coleções a partir deles e garante a limpeza
+        dos arquivos temporários no final.
+
+        Args:
+            files (List): Uma lista de objetos de arquivo do upload (de request.files).
+                          Tipicamente, são objetos werkzeug.datastructures.FileStorage.
+            tema (str): O tema a ser associado a estes arquivos, que definirá o nome da pasta.
+
+        Returns:
+            dict: Um dicionário indicando o sucesso ou falha da operação com uma mensagem.
+        """
+        # Define um diretório base para todos os uploads temporários.
+        # Você pode alterar "temp_uploads" se preferir.
+        temp_base_dir = "temp_uploads"
+        # Gera um ID único para esta requisição específica para garantir total isolamento.
+        request_id = str(uuid.uuid4())
+        unique_request_dir = os.path.join(temp_base_dir, request_id)
+
+        # Monta o caminho completo onde os arquivos serão processados.
+        # A estrutura aninhada é crucial para que o método `criar_colecoes_da_pasta`
+        # identifique `tema` como o nome da pasta pai e o associe corretamente.
+        diretorio_processamento = os.path.join(unique_request_dir, tema)
+
+        # O bloco `try...finally` garante que a limpeza sempre ocorrerá.
+        try:
+            # 1. Cria os diretórios temporários.
+            os.makedirs(diretorio_processamento, exist_ok=True)
+            print(f"[i] Diretório temporário de processamento criado: {diretorio_processamento}")
+
+            if not files:
+                return {"sucesso": False, "mensagem": "Nenhum arquivo foi enviado."}
+
+            # 2. Salva cada arquivo enviado no diretório de processamento.
+            nomes_arquivos = []
+            for file in files:
+                # É uma boa prática de segurança validar o nome do arquivo.
+                # Aqui, usamos o nome original para simplicidade.
+                if file and file.filename:
+                    caminho_arquivo_salvo = os.path.join(diretorio_processamento, file.filename)
+                    file.save(caminho_arquivo_salvo)
+                    nomes_arquivos.append(file.filename)
+
+            if not nomes_arquivos:
+                return {"sucesso": False, "mensagem": "Os arquivos enviados são inválidos ou não têm nome."}
+
+            print(f"[i] {len(nomes_arquivos)} arquivos salvos em pasta temporária: {', '.join(nomes_arquivos)}")
+
+            # 3. REAPROVEITA A LÓGICA EXISTENTE.
+            # Chama o método original para criar as coleções a partir da pasta temporária.
+            # Este método já contém toda a lógica de leitura e processamento de arquivos.
+            print(f"[i] Chamando 'criar_colecoes_da_pasta' para o tema '{tema}'...")
+            self.criar_colecoes_da_pasta(pasta_documentos=diretorio_processamento)
+
+            mensagem_sucesso = f"{len(nomes_arquivos)} arquivos do tema '{tema}' foram processados e adicionados com sucesso."
+            print(f"[+] {mensagem_sucesso}")
+            return {"sucesso": True, "mensagem": mensagem_sucesso}
+
+        except Exception as e:
+            # Em caso de qualquer erro, registra a falha e retorna uma mensagem.
+            mensagem_erro = f"Ocorreu um erro inesperado ao processar os arquivos para o tema '{tema}': {e}"
+            print(f"[-] {mensagem_erro}")
+            # Importante: O erro será retornado, mas o bloco `finally` ainda será executado.
+            return {"sucesso": False, "mensagem": mensagem_erro}
+
+        finally:
+            # 4. LIMPEZA GARANTIDA.
+            # Este bloco é executado sempre, tenha a operação dado certo ou errado.
+            # Verifica se o diretório principal da requisição existe antes de tentar removê-lo.
+            if os.path.exists(unique_request_dir):
+                print(f"[i] Limpando diretório temporário completo: {unique_request_dir}")
+                # `shutil.rmtree` remove o diretório e todo o seu conteúdo recursivamente.
+                shutil.rmtree(unique_request_dir)
+                print("[+] Limpeza do diretório temporário concluída.")
 
     def listar_colecoes(self):
         """Lista todas as coleções existentes com seus metadados."""
@@ -534,7 +611,7 @@ class SistemaRAG:
         if OneRing.PESQUISA_TEMA_IA_LOCAL:
             resposta = Gemma_IA.consultar_ollama_local(instrucao, contexto, pergunta, None, "gemma3n:latest")
         else:
-            resposta = Gemma_IA_API.consultar_gemma_api_gemini(instrucao, contexto, pergunta, None, "gemma-3n-e4b-it")
+            resposta = Gemma_IA_API.consultar_gemma_api_gemini(instrucao, contexto, pergunta, None, "gemma-3-27b-it")
         #resposta = Gemma_IA.consultar_ollama_local(instrucao, contexto, pergunta)
         tema_identificado = resposta.strip().lower()
         return tema_identificado if tema_identificado in self.temas_disponiveis else None
@@ -645,11 +722,12 @@ if __name__ == "__main__":
                     print("[!] Entrada inválida. Digite um número.")
             print("\n--- DELEÇÃO CONCLUÍDA ---")
         elif escolha == '4':
-            confirmacao = input("Tem certeza que deseja zerar TODAS as coleções? (s/n): ").lower()
-            if confirmacao == 's':
-                sistema_rag.zerar_todas_colecoes()
-            else:
-                print("Operação cancelada.")
+            # confirmacao = input("Tem certeza que deseja zerar TODAS as coleções? (s/n): ").lower()
+            # if confirmacao == 's':
+            #     sistema_rag.zerar_todas_colecoes()
+            # else:
+            #     print("Operação cancelada.")
+            sistema_rag.zerar_todas_colecoes()
             print("\n--- ZERAR TUDO CONCLUÍDO ---")
         elif escolha == '5':  # Nova opção
             print("\n--- LISTAR COLEÇÕES EXISTENTES ---")

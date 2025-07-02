@@ -24,6 +24,8 @@ protheus_custom/*.*
 # Pastas de dados do Grimória
 biblioteca_geral/
 biblioteca_geral
+temp/
+temp
 
 # Arquivos de cache e logs (gerais de Python)
 __pycache__/
