@@ -25,6 +25,10 @@
 #Ativar: .\ambiente_virtual\Scripts\activate
 #Desativar: deactivate
 
+#------------------------------------------------------------------
+# Para rodar um app Flask:
+# Exemplo: python api.py  
+#
 
 #------------------------------------------------------------------
 # PARA SUBIR PROJETO NO GIT

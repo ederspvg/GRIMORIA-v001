@@ -26,6 +26,9 @@ biblioteca_geral/
 biblioteca_geral
 temp/
 temp
+# Arquivos gerados pelo script gerenciado do ChromaDB
+start_chroma_server.bat
+chroma_server.log
 
 # Arquivos de cache e logs (gerais de Python)
 __pycache__/

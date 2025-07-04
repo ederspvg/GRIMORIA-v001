@@ -1,42 +1,37 @@
+# api.txt (versão final atualizada)
+
 from flask import Flask, request, jsonify
-import rag  # Importa o script rag.py
+import rag
+import ia_gemma_api_gemini as ia_gemini
+import ia_gemma as ia_local 
 
 app = Flask(__name__)
 
-# Instancia o sistema RAG
+# Instancia o sistema RAG uma única vez na inicialização
+# O __init__ da classe RAG já cuida de iniciar o servidor do banco de dados
 sistema_rag = rag.SistemaRAG()
 
 @app.route('/upload_e_criar_colecao', methods=['POST'])
 def upload_e_criar_colecao():
-    """
-    Recebe o upload de um ou mais arquivos e um tema, cria as coleções
-    correspondentes e limpa os arquivos temporários.
-    """
-    # 1. Validar a presença do parâmetro 'tema' no formulário
+    """Recebe o upload de um ou mais arquivos e um tema."""
     tema = request.form.get('tema')
     if not tema:
         return jsonify({"erro": "O parâmetro 'tema' é obrigatório no formulário."}), 400
 
-    # 2. Validar o recebimento de arquivos
     if 'files' not in request.files:
-        return jsonify({"erro": "Nenhum arquivo enviado. A requisição deve conter a parte 'files'."}), 400
+        return jsonify({"erro": "Nenhum arquivo enviado."}), 400
 
     files = request.files.getlist('files')
     if not files or all(f.filename == '' for f in files):
-        return jsonify({"erro": "Nenhum arquivo selecionado para upload."}), 400
+        return jsonify({"erro": "Nenhum arquivo selecionado."}), 400
 
     try:
-        # 3. Chamar o novo método da classe RAG, que orquestra toda a lógica
         resultado = sistema_rag.processar_uploads_e_criar_colecoes(files, tema)
-
-        # 4. Retornar a resposta com base no sucesso ou falha da operação
         if resultado.get("sucesso"):
-            return jsonify({"mensagem": resultado.get("mensagem", "Operação concluída com sucesso.")}), 200
+            return jsonify({"mensagem": resultado.get("mensagem")}), 200
         else:
-            return jsonify({"erro": resultado.get("mensagem", "Ocorreu um erro desconhecido.")}), 500
-
+            return jsonify({"erro": resultado.get("mensagem")}), 500
     except Exception as e:
-        # Captura exceções inesperadas para uma resposta de erro mais robusta
         return jsonify({"erro": f"Um erro inesperado ocorreu na API: {str(e)}"}), 500
 
 
@@ -46,7 +41,6 @@ def criar_colecao():
     diretorio = request.json.get('diretorio')
     if not diretorio:
         return jsonify({"erro": "O parâmetro 'diretorio' é obrigatório."}), 400
-
     try:
         sistema_rag.criar_colecoes_da_pasta(diretorio)
         return jsonify({"mensagem": f"Coleções criadas a partir do diretório '{diretorio}'."}), 200
@@ -55,31 +49,10 @@ def criar_colecao():
 
 @app.route('/listar_colecoes', methods=['GET'])
 def listar_colecoes():
-    """Lista todas as coleções existentes no sistema."""
+    """Lista todas as coleções existentes no sistema, já ordenadas."""
     try:
-        colecoes = []
-        for nome_colecao in sistema_rag.lista_nomes_colecoes:
-            colecao = sistema_rag.client.get_collection(name=nome_colecao, embedding_function=rag.embedding_function)
-            metadados = colecao.get(include=['metadatas'])['metadatas']
-            if not metadados:
-                continue
-
-            # Para evitar duplicatas na resposta da API, usamos um conjunto para rastrear combinações
-            arquivos_e_temas = set()
-            for meta in metadados:
-                arquivos_e_temas.add((
-                    meta.get("nome_arquivo_original", "N/A"),
-                    meta.get("tema", "N/A")
-                ))
-
-            # Adiciona apenas informações únicas por coleção
-            for nome_arquivo, tema in arquivos_e_temas:
-                colecoes.append({
-                    "id": nome_colecao,
-                    "nome_arquivo": nome_arquivo,
-                    "tema": tema
-                })
-        return jsonify(colecoes), 200
+        lista_de_colecoes = sistema_rag.listar_colecoes()
+        return jsonify(lista_de_colecoes), 200
     except Exception as e:
         return jsonify({"erro": str(e)}), 500
 
@@ -89,7 +62,6 @@ def deletar_colecao():
     id_colecao = request.json.get('id_colecao')
     if not id_colecao:
         return jsonify({"erro": "O parâmetro 'id_colecao' é obrigatório."}), 400
-
     try:
         resultado = sistema_rag.deletar_colecao_por_nome(id_colecao)
         if resultado:
@@ -108,27 +80,116 @@ def zerar_todas_colecoes():
     except Exception as e:
         return jsonify({"erro": str(e)}), 500
 
+# --- ENDPOINT ATUALIZADO ---
 @app.route('/consultar', methods=['POST'])
 def consultar():
-    """Consulta o sistema RAG com base em uma pergunta."""
+    """
+    Consulta o sistema RAG com uma pergunta e parâmetros opcionais.
+    """
+    # 1. Obter o parâmetro obrigatório
     pergunta = request.json.get('pergunta')
-    usar_ia_local = request.json.get('usar_ia_local', False)
-    n_results_per_colecao = request.json.get('n_results_per_colecao', 10)
-    max_distance_threshold = request.json.get('max_distance_threshold', 0.8)
-
     if not pergunta:
         return jsonify({"erro": "O parâmetro 'pergunta' é obrigatório."}), 400
 
+    # 2. Obter todos os parâmetros opcionais, com valores padrão
+    #    Os valores padrão são os mesmos da assinatura do método em rag_4.txt,
+    #    garantindo consistência se o cliente não enviar o campo.
+    usar_ia_local = request.json.get('usar_ia_local', False)
+    instrucao = request.json.get('instrucao', "")
+    modelo_de_pensamento = request.json.get('modelo_de_pensamento', "gemma-3-27b-it")
+    n_results_per_colecao = request.json.get('n_results_per_colecao', 10)
+    max_distance_threshold = request.json.get('max_distance_threshold', 0.8)
+    
+    # Parâmetros de caminho de arquivo (tratados como strings)
+    pdf_path = request.json.get('pdf_path', None)
+    imagem_path = request.json.get('imagem_path', None)
+
     try:
+        # 3. Chamar o método RAG com todos os parâmetros
         resposta = sistema_rag.consultar_multiplas_colecoes(
             pergunta=pergunta,
             usar_ia_local=usar_ia_local,
+            instrucao=instrucao,
+            pdf_path=pdf_path,
+            imagem_path=imagem_path,
+            modelo_de_pensamento=modelo_de_pensamento,
             n_results_per_colecao=n_results_per_colecao,
             max_distance_threshold=max_distance_threshold
         )
         return jsonify({"resposta": resposta}), 200
     except Exception as e:
-        return jsonify({"erro": str(e)}), 500
+        return jsonify({"erro": f"Erro inesperado durante a consulta: {str(e)}"}), 500
+    
+# --- Endpoint de Chamada Direta à IA ---
+
+@app.route('/chamar_ia_direto', methods=['POST'])
+def chamar_ia_direto():
+    """Endpoint para chamar a IA generativa diretamente, com opção de local ou API."""
+    data = request.get_json()
+    if not data: return jsonify({"erro": "Corpo da requisição JSON está vazio."}), 400
+        
+    pergunta = data.get('pergunta')
+    if not pergunta: return jsonify({"erro": "O parâmetro 'pergunta' é obrigatório."}), 400
+        
+    instrucao = data.get('instrucao', "")
+    contexto = data.get('contexto', "")
+    imagem_path = data.get('imagem_path', None)
+    usar_ia_local = data.get('usar_ia_local', False)
+    modelo_ia = data.get('modelo_ia') # Pega o modelo enviado pelo cliente
+
+    try:
+        if usar_ia_local:
+            print(f"[API] Chamada direta para IA LOCAL (modelo: {modelo_ia}). Pergunta: '{pergunta[:50]}...'")
+            # Define um modelo padrão para Ollama se nenhum for enviado
+            if not modelo_ia: modelo_ia = "gemma3:latest"
+            resposta_ia = ia_local.consultar_ollama_local(
+                instrucao=instrucao, contexto=contexto, pergunta=pergunta,
+                imagem_path=imagem_path, modelo_ia=modelo_ia
+            )
+        else:
+            print(f"[API] Chamada direta para IA API (modelo: {modelo_ia}). Pergunta: '{pergunta[:50]}...'")
+            # Define um modelo padrão para a API se nenhum for enviado
+            if not modelo_ia: modelo_ia = ia_gemini.API_MODEL
+            resposta_ia = ia_gemini.consultar_gemma_api_gemini(
+                instrucao=instrucao, contexto=contexto, pergunta=pergunta,
+                imagem_path=imagem_path, modelo_ia=modelo_ia
+            )
+            
+        return jsonify({"resposta": resposta_ia}), 200
+    except Exception as e:
+        return jsonify({"erro": f"Erro ao chamar a IA: {str(e)}"}), 500
+
+# RETORNA UMA LISTA DE MODELOS DISPONIVEIS NO GEMINI
+# Este endpoint permite que a interface Streamlit ou qualquer cliente consulte os modelos disponíveis
+
+@app.route('/listar_modelos_ia', methods=['GET'])
+def listar_modelos_ia():
+    """
+    Endpoint para listar os modelos de IA disponíveis na API do Google.
+    """
+    try:
+        print("[API] Solicitada a lista de modelos de IA disponíveis.")
+        # Chama a função diretamente do módulo importado
+        modelos_disponiveis_str = ia_gemini.consultar_modelos_gemini_disponiveis()
+        
+        # A função original retorna uma string formatada. Vamos dividi-la em uma lista
+        # para um JSON mais estruturado e útil para as aplicações clientes.
+        lista_modelos = []
+        if "Modelos disponíveis:" in modelos_disponiveis_str:
+            # Pega as linhas, remove o "- " inicial e linhas vazias
+            lista_modelos = [
+                line.strip().replace("- ", "") 
+                for line in modelos_disponiveis_str.split('\n') 
+                if line.strip() and line.strip().startswith("-")
+            ]
+        
+        return jsonify({"modelos": lista_modelos}), 200
+
+    except Exception as e:
+        return jsonify({"erro": f"Um erro inesperado ocorreu ao listar os modelos: {str(e)}"}), 500
+
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    # Usar host='0.0.0.0' torna a API acessível na sua rede local,
+    # o que é útil para a interface Streamlit rodar em outra máquina.
+    app.run(host='0.0.0.0', debug=True)
