@@ -193,3 +193,4 @@ if __name__ == '__main__':
     # Usar host='0.0.0.0' torna a API acessível na sua rede local,
     # o que é útil para a interface Streamlit rodar em outra máquina.
     app.run(host='0.0.0.0', debug=True)
+    

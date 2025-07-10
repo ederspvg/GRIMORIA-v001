@@ -578,6 +578,7 @@ class SistemaRAG:
             return f"Ocorreu um erro ao gerar a resposta pela IA: {e}"
 
         print(f" [i] Método consultar_multiplas_colecoes finalizado.")
+        print(f" \n[i] Resposta da IA: {resposta_gemini} \n")
         return resposta_gemini
 
     def _classificar_pergunta_por_tema(self, pergunta: str) -> str:
